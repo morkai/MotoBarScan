@@ -1,4 +1,4 @@
-Copyright (c) 2015 Łukasz Walukiewicz <lukasz@walukiewicz.eu>
+Copyright (c) 2015 Łukasz Walukiewicz <lukasz@miracle.systems>
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the

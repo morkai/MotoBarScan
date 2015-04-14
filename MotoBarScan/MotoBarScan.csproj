@@ -76,8 +76,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ActionWorker.cs" />
+    <Compile Include="IAction.cs" />
+    <Compile Include="BeepAction.cs" />
+    <Compile Include="LedAction.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="StdinWorker.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

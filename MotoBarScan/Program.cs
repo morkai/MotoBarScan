@@ -2,35 +2,85 @@
 // Licensed under the MIT License <http://lukasz.walukiewicz.eu/p/MIT>
 // Part of the MotoBarScan project <http://lukasz.walukiewicz.eu/p/MotoBarScan>
 
+using CoreScanner;
 using System;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Threading;
 using System.Xml;
-using CoreScanner;
 
 namespace MotoBarScan
 {
     class Program
     {
-        static CCoreScanner cCoreScannerClass;
+        public static int ERR_GENERAL = 0x01;
+        public static int ERR_SCANNER_OPEN = 0x02;
+        public static int ERR_BARCODE_EVENT = 0x03;
+
+        public static int OP_REGISTER_FOR_EVENTS = 1001;
+        public static int OP_DEVICE_LED_OFF = 2009;
+        public static int OP_DEVICE_LED_ON = 2010;
+        public static int OP_SET_ACTION = 6000;
+
+        static CCoreScanner coreScanner;
 
         static void Main(string[] args)
         {
+            OpenBarcodeScanner();
+
+            var tokenSource = new CancellationTokenSource();
+            var actionQueue = new BlockingCollection<IAction>();
+            var stdinWorker = new StdinWorker(tokenSource, actionQueue);
+            var stdinThread = new Thread(stdinWorker.Run);
+            var actionWorker = new ActionWorker(tokenSource, actionQueue);
+            var actionThread = new Thread(actionWorker.Run);
+
+            stdinWorker.RegisterAction("LED", new LedAction(coreScanner));
+            stdinWorker.RegisterAction("BEEP", new BeepAction(coreScanner));
+
+            Console.CancelKeyPress += (object sender, ConsoleCancelEventArgs e) => { tokenSource.Cancel(); };
+
             try
             {
-                cCoreScannerClass = new CCoreScannerClass();
+                stdinThread.Start();
+                actionThread.Start();
+                stdinThread.Join();
+                actionThread.Join();
+            }
+            catch (Exception x)
+            {
+                Exit(x, ERR_GENERAL);
+            }
+        }
+
+        public static void Exit(Exception x, int exitCode)
+        {
+            Console.Error.WriteLine("ERROR: " + x.ToString());
+            Environment.Exit(exitCode);
+        }
+
+        public static void Exit(int exitCode)
+        {
+            Environment.Exit(exitCode);
+        }
+
+        private static void OpenBarcodeScanner()
+        {
+            try
+            {
+                coreScanner = new CCoreScannerClass();
 
                 short[] scannerTypes = new short[] { 1 };
                 int status;
 
-                cCoreScannerClass.Open(0, scannerTypes, (short)scannerTypes.Length, out status);
+                coreScanner.Open(0, scannerTypes, (short)scannerTypes.Length, out status);
 
                 if (status != 0)
                 {
-                    Environment.Exit(1);
+                    Exit(ERR_SCANNER_OPEN);
                 }
 
-                cCoreScannerClass.BarcodeEvent += cCoreScannerClass_BarcodeEvent;
+                coreScanner.BarcodeEvent += OnBarcodeEvent;
 
                 string outXML;
                 string inXML = "<inArgs>"
@@ -40,36 +90,41 @@ namespace MotoBarScan
                     + "</cmdArgs>"
                     + "</inArgs>";
 
-                cCoreScannerClass.ExecCommand(1001, ref inXML, out outXML, out status);
+                coreScanner.ExecCommand(OP_REGISTER_FOR_EVENTS, ref inXML, out outXML, out status);
 
                 if (status != 0)
                 {
-                    Environment.Exit(2);
+                    Exit(ERR_BARCODE_EVENT);
                 }
-
-                Thread.Sleep(-1);
             }
             catch (Exception x)
             {
-                Console.Error.WriteLine(x.Message);
+                Exit(x, ERR_GENERAL);
             }
         }
 
-        static void cCoreScannerClass_BarcodeEvent(short eventType, ref string pscanData)
+        private static void OnBarcodeEvent(short eventType, ref string pscanData)
         {
             try
             {
                 var xmlDoc = new XmlDocument();
                 xmlDoc.LoadXml(pscanData);
 
-                var xmlNode = xmlDoc.DocumentElement.SelectSingleNode("/outArgs/arg-xml/scandata/datalabel");
+                var scannerIdNode = xmlDoc.DocumentElement.SelectSingleNode("/outArgs/scannerID");
 
-                if (xmlNode == null)
+                if (scannerIdNode == null)
                 {
                     return;
                 }
 
-                var hexStrings = xmlNode.InnerText.Split(' ');
+                var dataLabelNode = xmlDoc.DocumentElement.SelectSingleNode("/outArgs/arg-xml/scandata/datalabel");
+
+                if (dataLabelNode == null)
+                {
+                    return;
+                }
+
+                var hexStrings = dataLabelNode.InnerText.Split(' ');
                 var hexBytes = new byte[hexStrings.Length];
 
                 for (var i = 0; i < hexStrings.Length; ++i)
@@ -77,7 +132,7 @@ namespace MotoBarScan
                     hexBytes[i] = Convert.ToByte(hexStrings[i], 16);
                 }
 
-                Console.WriteLine(Encoding.ASCII.GetString(hexBytes));
+                Console.WriteLine("BARCODE {0} {1}", scannerIdNode.InnerText, Encoding.ASCII.GetString(hexBytes));
             }
             catch (Exception x)
             {
